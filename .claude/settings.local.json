@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run dev)",
+      "Bash(docker run:*)",
+      "Bash(docker --version:*)",
+      "Bash(setx:*)",
+      "Bash(reg query:*)",
+      "Bash(powershell -command \"Get-ItemProperty -Path ''HKCU:\\\\Environment'' -Name ''ALIBABA_CLOUD_ACCESS_KEY_ID'', ''ALIBABA_CLOUD_ACCESS_KEY_SECRET''\")",
+      "mcp__filesystem__directory_tree",
+      "mcp__filesystem__read_file",
+      "mcp__filesystem__read_text_file"
+    ]
+  }
+}
