@@ -4,7 +4,7 @@ import {
   Delete
 } from '@element-plus/icons-vue'
 
-import {ref} from 'vue'
+import {ref, watch, onMounted, onUnmounted} from 'vue'
 
 //文章分类数据模型
 const categorys = ref([])
@@ -18,21 +18,13 @@ const state = ref('')
 //文章列表数据模型
 const articles = ref([])
 
-//分页条数据模型
-const pageNum = ref(1)//当前页
-const total = ref(20)//总条数
-const pageSize = ref(3)//每页条数
+//无限滚动状态
+const loading = ref(false)        // 加载中
+const hasMore = ref(true)         // 是否还有更多
+const lastId = ref(null)          // 游标值（最后一条文章的id）
+const isFirstLoad = ref(true)     // 是否首次加载
+const sentinelRef = ref(null)     // 底部哨兵元素引用
 
-//当每页条数发生了变化，调用此函数
-const onSizeChange = (size) => {
-  pageSize.value = size
-  articleList()
-}
-//当前页码发生变化，调用此函数
-const onCurrentChange = (num) => {
-  pageNum.value = num
-  articleList()
-}
 import {useTokenStore} from "@/stores/token.js";
 const tokenStore=useTokenStore();
 import {QuillEditor} from '@vueup/vue-quill'
@@ -49,33 +41,106 @@ const articleCategoryList = async () => {
   categorys.value = result.data
 }
 articleCategoryList()
-//获取文章列表数据
-const articleList = async () => {
-  let params = {
-    pageNum: pageNum.value,
-    pageSize: pageSize.value,
-    categoryId: categoryId.value ? categoryId.value : null,
-    state: state.value ? state.value : null
-  }
-  let result = await articleListService(params);
 
-  total.value = result.data.total;
-  articles.value = result.data.items
-  //处理分类名称
-    for (let i=0;i<articles.value.length;i++){
-      let article=articles.value[i];
-      for (let j=0;j<categorys.value.length;j++){
-        if (article.categoryId==categorys.value[j].id){
-          article.categoryName = categorys.value[j].categoryName;
-        }
+//解析文章分类名称
+const resolveCategoryName = (article) => {
+  for (let j = 0; j < categorys.value.length; j++) {
+    if (article.categoryId === categorys.value[j].id) {
+      return categorys.value[j].categoryName
+    }
+  }
+  return ''
+}
+
+//加载文章列表（支持无限滚动）
+const loadArticles = async () => {
+  if (loading.value || !hasMore.value) return
+  loading.value = true
+
+  try {
+    const params = { pageSize: 10 }
+
+    if (isFirstLoad.value) {
+      // 首次加载：使用偏移分页，拿到 total
+      params.pageNum = 1
+      params.categoryId = categoryId.value ? categoryId.value : null
+      params.state = state.value ? state.value : null
+    } else {
+      // 滚动加载：使用游标分页
+      params.lastId = lastId.value
+    }
+
+    const res = await articleListService(params)
+
+    if (isFirstLoad.value) {
+      // 首次加载：替换列表
+      articles.value = res.data.items
+      isFirstLoad.value = false
+      // 根据 total 判断是否还有更多
+      hasMore.value = articles.value.length < res.data.total
+    } else {
+      // 追加到现有列表
+      articles.value = [...articles.value, ...res.data.items]
+      // 游标分页优先使用 hasMore 字段
+      if (res.data.hasMore !== null && res.data.hasMore !== undefined) {
+        hasMore.value = res.data.hasMore
       }
     }
+
+    // 更新游标：取最后一条的 id
+    const items = res.data.items
+    if (items.length > 0) {
+      lastId.value = items[items.length - 1].id
+    }
+  } finally {
+    loading.value = false
+  }
 }
-articleList()
+
+//重置并重新加载（筛选条件变化时调用）
+const resetAndLoad = () => {
+  articles.value = []
+  lastId.value = null
+  hasMore.value = true
+  isFirstLoad.value = true
+  loadArticles()
+}
+
+//监听筛选条件变化
+watch([categoryId, state], () => {
+  resetAndLoad()
+})
+
+//IntersectionObserver 监听底部哨兵元素实现无限滚动
+let scrollObserver = null
+onMounted(() => {
+  loadArticles()
+  scrollObserver = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          loadArticles()
+        }
+      },
+      { rootMargin: '100px' }
+  )
+  if (sentinelRef.value) {
+    scrollObserver.observe(sentinelRef.value)
+  }
+})
+
+onUnmounted(() => {
+  if (scrollObserver) {
+    scrollObserver.disconnect()
+    scrollObserver = null
+  }
+})
 
 import {Plus} from '@element-plus/icons-vue'
 //控制抽屉是否显示
 const visibleDrawer = ref(false)
+//查看抽屉
+const viewDrawerVisible = ref(false)
+const viewingArticle = ref(null)
 //添加表单数据模型
 const title =ref('')
 const articleModel = ref({
@@ -106,7 +171,7 @@ const  addArticle=async (clickState) => {
   let result = await articleAddService(articleModel.value)
  ElMessage.success(result.msg? result.msg:'添加成功')
   visibleDrawer.value=false
-   await articleList()
+   await resetAndLoad()
 }
 //删除文章
 const deleteArticle =(row)=>{
@@ -125,7 +190,7 @@ const deleteArticle =(row)=>{
           type: 'success',
           message: '删除成功',
         })
-        await articleList();
+        await resetAndLoad();
       })
       .catch(() => {
         ElMessage({
@@ -138,7 +203,7 @@ const updateArticle=async (clickState) => {
   articleModel.value.state = clickState;
   let result = await articleUpdateService(articleModel.value)
   ElMessage.success(result.msg ? result.msg : '修改成功')
-  await articleList()
+  await resetAndLoad()
   visibleDrawer.value=false;
 }
 //文章数据回调
@@ -148,6 +213,11 @@ const showArticle=(row)=>{
   articleModel.value.categoryId=row.categoryId;
   articleModel.value.content=row.content
   articleModel.value.id=row.id;
+}
+//点击卡片查看
+const handleCardClick = (article) => {
+  viewingArticle.value = article
+  viewDrawerVisible.value = true
 }
 </script>
 <template>
@@ -180,31 +250,64 @@ const showArticle=(row)=>{
         </el-select>
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" @click="articleList">搜索</el-button>
+        <el-button type="primary" @click="resetAndLoad">搜索</el-button>
         <el-button @click="categoryId='';state=''">重置</el-button>
       </el-form-item>
     </el-form>
-    <!-- 文章列表 -->
-    <el-table :data="articles" style="width: 100%">
-      <el-table-column label="文章标题" width="400" prop="title"></el-table-column>
-      <el-table-column label="分类" prop="categoryName"></el-table-column>
-      <el-table-column label="发表时间" prop="createTime"></el-table-column>
-      <el-table-column label="状态" prop="state"></el-table-column>
-      <el-table-column label="操作" width="100">
-        <template #default="{ row }">
-          <el-button :icon="Edit" circle plain type="primary" @click="visibleDrawer=true;title='编辑文章';showArticle(row)"></el-button>
-          <el-button :icon="Delete" circle plain type="danger" @click="deleteArticle(row)"></el-button>
-        </template>
-      </el-table-column>
-      <template #empty>
-        <el-empty description="没有数据"/>
-      </template>
-    </el-table>
-    <!-- 分页条 -->
-    <el-pagination v-model:current-page="pageNum" v-model:page-size="pageSize" :page-sizes="[3, 5 ,10, 15]"
-                   layout="jumper, total, sizes, prev, pager, next" background :total="total"
-                   @size-change="onSizeChange"
-                   @current-change="onCurrentChange" style="margin-top: 20px; justify-content: flex-end"/>
+
+    <!-- 文章网格（3列无限滚动） -->
+    <div class="article-grid">
+      <div v-for="article in articles" :key="article.id" class="article-card"
+           :style="{ backgroundImage: article.coverImg ? `url(${article.coverImg})` : 'none' }"
+           @click="handleCardClick(article)">
+        <div class="card-overlay">
+          <div class="card-top">
+            <span class="card-title">{{ article.title }}</span>
+            <el-tag :type="article.state === '已发布' ? 'success' : 'info'" size="small" effect="dark">
+              {{ article.state }}
+            </el-tag>
+          </div>
+          <div class="card-bottom">
+            <span class="card-meta">{{ resolveCategoryName(article) }}</span>
+            <span class="card-meta">{{ article.createTime.slice(0, 10) }}</span>
+            <div class="card-actions">
+              <el-button :icon="Edit" circle plain type="primary" size="small"
+                         @click.stop="visibleDrawer=true;title='编辑文章';showArticle(article)"></el-button>
+              <el-button :icon="Delete" circle plain type="danger" size="small"
+                         @click.stop="deleteArticle(article)"></el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 加载中 -->
+      <div v-if="loading" class="load-status">
+        <el-icon class="is-loading" style="margin-right: 6px">
+          <svg viewBox="0 0 1024 1024" width="16" height="16">
+            <path d="M512 64a32 32 0 0 1 32 32v192a32 32 0 0 1-64 0V96a32 32 0 0 1 32-32z" fill="currentColor"/>
+            <path d="M512 736a32 32 0 0 1 32 32v192a32 32 0 0 1-64 0V768a32 32 0 0 1 32-32z" fill="currentColor" opacity="0.6"/>
+            <path d="M832 448a32 32 0 0 1 32 32v64a32 32 0 0 1-64 0v-64a32 32 0 0 1 32-32z" fill="currentColor" opacity="0.2"/>
+            <path d="M192 448a32 32 0 0 1 32 32v64a32 32 0 0 1-64 0v-64a32 32 0 0 1 32-32z" fill="currentColor" opacity="0.8"/>
+            <path d="M739.2 260.8a32 32 0 0 1 45.28 0l135.76 135.76a32 32 0 0 1-45.28 45.28L739.2 306.08a32 32 0 0 1 0-45.28z" fill="currentColor" opacity="0.4"/>
+            <path d="M103.76 582.16a32 32 0 0 1 45.28 0l135.76 135.76a32 32 0 0 1-45.28 45.28L103.76 627.44a32 32 0 0 1 0-45.28z" fill="currentColor" opacity="0.7"/>
+            <path d="M739.2 763.2a32 32 0 0 1 0 45.28L603.44 944.24a32 32 0 0 1-45.28-45.28l135.76-135.76a32 32 0 0 1 45.28 0z" fill="currentColor" opacity="0.3"/>
+            <path d="M284.8 260.8a32 32 0 0 1 0 45.28L149.04 441.84a32 32 0 0 1-45.28-45.28L239.52 260.8a32 32 0 0 1 45.28 0z" fill="currentColor" opacity="0.9"/>
+          </svg>
+        </el-icon>
+        加载中...
+      </div>
+
+      <!-- 没有更多了 -->
+      <div v-if="!hasMore && articles.length > 0" class="load-status no-more">
+        — 没有更多了 —
+      </div>
+
+      <!-- 哨兵元素 -->
+      <div ref="sentinelRef" style="height: 1px"></div>
+
+      <!-- 空状态 -->
+      <el-empty v-if="!loading && articles.length === 0" description="暂无文章"/>
+    </div>
   </el-card>
   <el-drawer v-model="visibleDrawer" :title=title  direction="rtl" size="50%">
     <!-- 添加文章表单 -->
@@ -234,7 +337,7 @@ const showArticle=(row)=>{
       </el-form-item>
       <el-form-item label="文章内容">
         <div class="editor">
-          <quill-editor
+          <quill-editor v-if="visibleDrawer"
               theme="snow"
               v-model:content="articleModel.content"
               contentType="html"
@@ -247,6 +350,31 @@ const showArticle=(row)=>{
         <el-button type="info" @click="title==='添加文章'? addArticle('草稿'):updateArticle('草稿')">草稿</el-button>
       </el-form-item>
     </el-form>
+  </el-drawer>
+  <!-- 查看文章抽屉 -->
+  <el-drawer v-model="viewDrawerVisible" :title="viewingArticle?.title || '查看文章'" direction="rtl" size="50%">
+    <div v-if="viewingArticle" class="view-article">
+      <div class="view-cover" v-if="viewingArticle.coverImg">
+        <img :src="viewingArticle.coverImg" alt="封面"/>
+      </div>
+      <div class="view-info">
+        <div class="info-row">
+          <span class="info-label">分类</span>
+          <span>{{ resolveCategoryName(viewingArticle) }}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">状态</span>
+          <el-tag :type="viewingArticle.state === '已发布' ? 'success' : 'info'" size="small">
+            {{ viewingArticle.state }}
+          </el-tag>
+        </div>
+        <div class="info-row">
+          <span class="info-label">发表时间</span>
+          <span>{{ viewingArticle.createTime.slice(0, 10) }}</span>
+        </div>
+      </div>
+      <div class="view-content" v-html="viewingArticle.content"></div>
+    </div>
   </el-drawer>
 </template>
 <style lang="scss" scoped>
@@ -265,12 +393,150 @@ const showArticle=(row)=>{
   --el-select-width: 220px;
 }
 
+.article-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.article-card {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  aspect-ratio: 3 / 4;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--el-color-info-light-5);
+  cursor: pointer;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+
+    .card-overlay {
+      background: linear-gradient(transparent 30%, rgba(0, 0, 0, 0.85));
+    }
+  }
+
+  .card-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 14px;
+    background: linear-gradient(transparent 40%, rgba(0, 0, 0, 0.75));
+    transition: background 0.25s ease;
+  }
+
+  .card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1.4;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      flex: 1;
+    }
+  }
+
+  .card-bottom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+
+    .card-meta {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.8);
+    }
+
+    .card-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+    }
+  }
+}
+
+.load-status {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 24px 0;
+  color: var(--el-text-color-secondary);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &.no-more {
+    color: var(--el-text-color-placeholder);
+  }
+}
+
+.article-grid .el-empty {
+  grid-column: 1 / -1;
+}
+
+.view-article {
+  padding: 0 8px;
+
+  .view-cover {
+    max-width: 300px;
+    margin-bottom: 20px;
+    border-radius: 8px;
+    overflow: hidden;
+
+    img {
+      width: 100%;
+      display: block;
+    }
+  }
+
+  .view-info {
+    background: var(--el-fill-color-light);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+
+    .info-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 6px 0;
+      font-size: 14px;
+
+      .info-label {
+        color: var(--el-text-color-secondary);
+        min-width: 60px;
+        flex-shrink: 0;
+      }
+    }
+  }
+
+  .view-content {
+    font-size: 15px;
+    line-height: 1.8;
+    color: var(--el-text-color-primary);
+  }
+}
+
 .avatar-uploader {
   :deep() {
     .avatar {
       width: 178px;
       height: 178px;
-      display: block;
     }
 
     .el-upload {
