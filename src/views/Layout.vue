@@ -2,6 +2,7 @@
 import {
   Management,
   Promotion,
+  ChatLineRound,
   UserFilled,
   User,
   Crop,
@@ -77,6 +78,12 @@ const handleCommand =(command)=>{
           </el-icon>
           <span>文章管理</span>
         </el-menu-item>
+        <el-menu-item index="/ai/chat">
+          <el-icon>
+            <ChatLineRound/>
+          </el-icon>
+          <span>AI 助手</span>
+        </el-menu-item>
         <el-sub-menu>
           <template #title>
             <el-icon>
@@ -132,8 +139,6 @@ const handleCommand =(command)=>{
       <el-main>
       <router-view></router-view>
       </el-main>
-      <!-- 底部区域 -->
-      <el-footer>大事件 ©2023 Created by 黑马程序员</el-footer>
     </el-container>
   </el-container>
 </template>

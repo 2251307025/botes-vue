@@ -7,6 +7,7 @@ import ArticleManageVue from '@/views/article/ArticleManage.vue'
 import UserAvatarVue from "@/views/user/UserAvatar.vue";
 import UserInfoVue from "@/views/user/UserInfo.vue";
 import UserResetPasswordVue from "@/views/user/UserResetPassword.vue";
+import AiChat from '@/views/ai/AiChat.vue'
 
 
 const routes=[
@@ -19,7 +20,8 @@ const routes=[
             {path: '/article/manage', component:ArticleManageVue},
             {path: '/user/info', component:UserInfoVue},
             {path: '/user/avatar', component:UserAvatarVue},
-            {path: '/user/resetPassword', component:UserResetPasswordVue}
+            {path: '/user/resetPassword', component:UserResetPasswordVue},
+            {path: '/ai/chat', component: AiChat}
         ]
     }
 ]
