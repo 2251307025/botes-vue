@@ -72,21 +72,21 @@ async function sendMessage() {
   isLoading.value = true
   scrollToBottom()
 
-  const aiMsg = { role: 'assistant', content: '' }
-  messages.value.push(aiMsg)
+  const idx = messages.value.length
+  messages.value.push({ role: 'assistant', content: '' })
 
   abortController.value = sendChatMessage(text, {
     onMessage(data) {
-      aiMsg.content += data
+      messages.value[idx].content += data
       scrollToBottom()
     },
     onError(msg) {
-      aiMsg.content = aiMsg.content || `[错误] ${msg}`
+      messages.value[idx].content = messages.value[idx].content || `[错误] ${msg}`
       scrollToBottom()
     },
     onClose() {
-      if (!aiMsg.content) {
-        aiMsg.content = '（未获取到回复）'
+      if (!messages.value[idx].content) {
+        messages.value[idx].content = '（未获取到回复）'
       }
       isLoading.value = false
       abortController.value = null
