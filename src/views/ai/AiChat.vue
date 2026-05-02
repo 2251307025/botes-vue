@@ -56,6 +56,13 @@ onMounted(() => {
       messages.value = JSON.parse(saved)
     } catch { /* ignore */ }
   }
+  // 首次进入时 AI 打招呼
+  if (messages.value.length === 0) {
+    messages.value.push({
+      role: 'assistant',
+      content: '你好！我是你的 **AI 笔记助手** 📝，可以帮你管理笔记和分类，也能根据笔记内容回答你的问题。有什么需要帮忙的吗？'
+    })
+  }
 })
 
 // 持久化消息
@@ -118,7 +125,10 @@ function clearHistory() {
     cancelButtonText: '取消',
     type: 'warning',
   }).then(async () => {
-    messages.value = []
+    messages.value = [{
+      role: 'assistant',
+      content: '你好！我是你的 **AI 笔记助手** 📝，可以帮你管理笔记和分类，也能根据笔记内容回答你的问题。有什么需要帮忙的吗？'
+    }]
     localStorage.removeItem('aiChatHistory')
     await deleteMemory()
     ElMessage.success('已清空')
